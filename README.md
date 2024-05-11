@@ -280,3 +280,153 @@ _If you want to get the result of all completable futures, you have to right a s
                         .collect(toList()));
     }
 ```
+
+## Reactive Streams - RxJava
+
+This is quite a buzz word nowadays and there are different meaning of what reactive means:
+
+1. Functional reactive programming (FRP) - this is more the academic perspective on reactive programming (it is a programming paradigm that combines functional programming with reactive programming concepts)
+2. Reactive systems - is more about the architectural style. A way of getting systems and components and allowing them to work together following the _reactive manifesto***_ principles. 
+3. Reactive programming - it's a declarative and event-based style of programming. Decompose a big problem into multiple async steps then composing them together.
+
+***reactive manifesto defines a key set of properties that an application has to follow in order to be reactive: responsive, resilient, elastic and message-driven.
+
+- responsive: when a user makes a request, the system should respond in a timely (and effective) manner.
+- resilient: when things go wrong, the system doesn't collapse as a house of card and it continues to respond to users
+- elastic: as the load/demand increases (request rate goes up), the resources are added to the system to handle the load - the same applies when the load decreases, resources are removed.
+- message-driven: this property is meant to enable the other 3.
+
+_Reactive programming has a few models: callbacks, actors, completable future and reactive streams. One can achieve reactive systems by using purely callbacks_
+
+Why yet another library? The benefits of asynchronous programming and enabling non-blocking i/o are clear by now. However *callbacks* are really low-level thus 
+hard to develop and maintain. *Completable future* only deals nicely with single values and frequently we want to process series of values / sequence of events. 
+*Actors* require getting deep into the whole framework, which is great for some use cases but not all - and it also slightly low-level.
+
+Reactive stream libs like rxjava offer a concept of a stream of async and non-blocking sequence of events which is either an observable or a flowable.
+It can be seem as a pipe construct, where declarative sequences of operations are defined to be executed when the data arrives.
+
+One way of thinking about observables (or flowables) is in comparison with the blocking approach:
+
+_Observable rxjava 1st release, flowable rxjava 2nd release_
+
+|              | Single Item          | Many Items                      |
+|--------------|----------------------|---------------------------------|
+| Blocking     | T get()              | Stream<T> (or List<T>)          |
+| Non-blocking | CompletableFuture<T> | Observable<T> (or Flowable<T>)  |
+
+Stream is more suitable for computational tasks, while observable supports composing, blocking and non blocking i/o sources (more flexibility in its threading model)
+- batch computation vs on demand computation.
+
+Ps: observable clients treat it as non-blocking even though the source may block - similarly to completable feature, it's down to the underlaying implementation.
+.
+
+##### Observer Design Pattern vs Observable reactive streams
+
+_Refresher: Observer design pattern is a way of broadcasting events to different consumers_
+
+They have similar names and are for similar purposes. However, the observable has a stream like API with common operations, which if you want to achieve on 
+with the observer you have to implement yourself, including potential thread safety issues. 
+
+Observable also has a few more features like backpressure, throttling, error handling, etc.
+
+
+#### Lifecycle
+
+The lifecycle is defined by the subscriber interface and it's composed of 4 methods: onSubscribe, onNext, onError and onComplete.
+
+onSubscribe is the only one that warrants an explanation as the others are self-explanatory. Upon subscription, the subscriber receives a Subscription object,
+which contains 2 methods - request and cancel. The request method is used to request a number of items from the publisher (backpressure).
+
+But many times developers use the consumer interface instead and provide different consumers for each of the events (onNext, onError, onComplete).
+
+Example in the class `com.cedran.async_java.reactive_streams.Examples#subscriberExample`.
+
+#### Types of flowables
+
+1. Hot flowables - they start emitting events as soon as they are created, regardless of whether there are subscribers or not (subscribes may miss events) - The publisher controls the rate of events.
+Examples: mouse events (no control over the user controlling the hardware), stock prices (no control over the stock market), stream of video being broadcast
+2. Cold flowables - they start emitting events only when there is a subscriber (subscribers will receive all events) - only want suscriber
+Examples: db query, file i/o, http request
+
+
+#### Unit Tests
+
+There is a built-in test subscriber in RX Java API. TestSubscriber implements Subscriber interface and can be used to subscribe to objects.
+
+The test subscriber has an api to allow developers to make asserts on the events that are going through the flowable.
+
+`assertValue`, `assertValues`, `assertValueCount`, `assertSubscribed`, `assertNotSubscribed`, `assertComplete`, `assertError`, `assertTerminated` are just a few of the assertions available.
+
+
+#### Error Handling
+
+Errors can be categorised in 3 types: transient failure (network issue, remote service failure), 
+calculation / processing / logic error (invalid user input, divide by zero), unrecoverable error (out of memory, disk failure, disk space - somebody has to intervene). 
+
+Strategies for error handling:
+- Transient failure - retry
+- processing errors - default value (e.g notify the user that a given value is invalid)
+- unrecoverable error - propagate the errors somewhere (so an alert can be sent)
+
+`onErrorReturn(ex)`, `onErrorReturnItem()`, `onErrorResumeNext(anotherFlowableToContinue)`.
+
+Important to bear in mind that once an exception occurs, the flowable is terminated and no more events are emitted (besides the default value).
+If you want to continue processing, you have to use `onErrorResumeNext`, which provides a new flowable to continue processing.
+
+#### Backpressure
+
+Backpressure is the process of controlling the rate at which something occurs in order to ensure that there isn't breach of capacity limit
+(and starts acting in a unstable or potentially dangerous manner).
+
+Queues are a good example of backpressure - however if the producers are producing at a faster rate that the consumers can consume, 
+and the queue has an unbounded size, eventually memory leak will occur.
+
+Cold flowables can be backpressured.
+
+
+
+
+#### Throttling (conflation)
+
+Sometimes you don't have the control over the producer and in order to avoid overloading your system, you may prefer to drop some events 
+(example, overflow valve in a pipe that conducts water to avoid pipe bursting) - useful when you cannot backpressure (control the rate that something is produced).
+
+Hot flowables can be throttled.
+
+One way of throttling is by using the `sample` operator (`throttleLast` basically does the same). It takes all the values within the 
+specified period and emits the last one (dropping the rest).
+
+Another option is the `buffer` operator. It aggregates the number of requested elements into a buffer and then emmit a list of those values.
+
+
+#### Specialised Thread Pools
+
+There are different types of thread pools that can be used for different purposes. RxJava provides a scheduler abstraction to allow developers
+to determine which thread pool a given flowable and / or operator should run on (and even ether the should run with a delay or periodically).
+
+Some of the API methods are overloaded with variations that take schedulers as parameters (some others simply define the scheduler by themselves).
+
+```java
+    loadUsersFromDb()
+        .observeOn(Schedulers.computation())
+        .map(this::calculateAnalytics)
+        .subscribeOn(Schedulers.io())
+        .subscribe(this::storeToDb);
+```
+
+`observeOn` defines where next operators should run on
+
+`subscribeOn` defines where the subscription should run on (until it finds a `observeOn` so that from there on it runs on the `observeOn` scheduler).
+The position of the subscribeOn in the chain doesn't matter - it'll apply from the first operator. If there are 2 subscribeOn, the first one is applied 
+(but there shouldn't be more than one).
+
+Common schedulers: `io`, `computation` and `trampoline`
+
+
+#### Processors
+
+F
+
+
+
+
